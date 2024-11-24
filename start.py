@@ -1,17 +1,18 @@
-from apiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-import pickle
+import pickle`
 import os.path
-from datetime import datetime, timezone
 import time
 import pytz
 import pygame
+import keyboard
+from apiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from datetime import datetime, timezone
 
 # ---------CONSTS---------
 scopes = ['https://www.googleapis.com/auth/calendar']
 NUMBER_OF_CALENDARS = 12
 WAIT_N_MINUTES_FOR_NEXT_CHECK = 1
-audioSource = "/home/pucollini/Projects/Sounds/"
+audioSource = "/home/pucollini/Projects/AlarmClock/Sounds/"
 audioName = "Nightcall.mp3"
 
 #---------FUNCTIONS---------
@@ -51,9 +52,8 @@ def isIndexWrong(index):
         return True
     return False
 
-
-def findClosestIndexBeforeAlarm(eventList, now, lastIndex):
-    before = datetime.fromisoformat("9999-12-12 23:59:59")
+def findClosestIndexBeforeAlarm(eventList, now, lastIndex, timeZone):
+    before = datetime(9999, 12, 30, 23, 59, 59, tzinfo=timeZone)
     
     for i, event in enumerate(eventList['items']):
         if i < lastIndex:
@@ -89,11 +89,12 @@ def findClosestIndexBeforeAlarm(eventList, now, lastIndex):
 
 # ---------CODE---------
 lastEventIndex = 0
+hasEventBeenCalled = []
+isTableForEventsAlreadyInitialized = False
 
 while True:
     service = connectToGoogleCalendar()
 
-    # wszystkie kalendarze w liscie
     allCalendars = service.calendarList().list().execute()
 
     wakingUpIndex = where_is_waking_up_index(allCalendars)
@@ -105,32 +106,25 @@ while True:
     wakingCalendar = allCalendars['items'][wakingUpIndex]
 
     eventsWakingUpList = service.events().list(calendarId=wakingCalendar['id'], orderBy="startTime", singleEvents=True).execute()
-
-    # events = eventsWakingUpList.get("items", [])
-
-    # for event in sortedWakingUpList:
-    #    start_time = event['start'].get('dateTime', event['start'].get('date'))
-    #    print(start_time)
-
-    # print('\n')
-    # print(eventsWakingUpList)
-    # print('\n')
-
+    
+    if isTableForEventsAlreadyInitialized == False:
+        hasEventBeenCalled = [False] * len(eventsWakingUpList['items'])
+        isTableForEventsAlreadyInitialized = True
+    
     event1Index = findEventNameIndex(eventsWakingUpList, 'POBUDKA')
     
     if isIndexWrong(event1Index):
         raise ValueError("Event not found.")
 
-    # 2.
-    event0 = eventsWakingUpList['items'][0]
+    event0 = eventsWakingUpList['items'][0] # only to grab the timezone for calendar
 
     utc_timezone = pytz.timezone(event0['start']['timeZone'])
     date_now = datetime.now(utc_timezone).replace(microsecond=0)
 
-    closest_events_index = findClosestIndexBeforeAlarm(eventsWakingUpList, date_now, lastEventIndex)
+    closest_events_index = findClosestIndexBeforeAlarm(eventsWakingUpList, date_now, lastEventIndex, utc_timezone)
     lastEventIndex = closest_events_index
     
-    event1 = eventsWakingUpList['items'][closest_events_index] # [event1Index]
+    event1 = eventsWakingUpList['items'][closest_events_index]
     event1_start_time = event1['start']['dateTime']
     event1_end_time = event1['end']['dateTime']
 
@@ -139,43 +133,29 @@ while True:
     print("END TIME:", event1_end_time)
 
     # zamienienie formatu daty z kalendarza aby można było porównać go z datą aktualną
-
     event1_start_time = datetime.fromisoformat(event1_start_time)
     event1_end_time = datetime.fromisoformat(event1_end_time)
 
-    print("TIME NOW:", date_now)
+    print("TIME NOW:", date_now,'\n')
 
-    if event1_start_time <= date_now <= event1_end_time:
+    if event1_start_time <= date_now <= event1_end_time and not hasEventBeenCalled[lastEventIndex]:
         print("ALARM!")
+        hasEventBeenCalled[lastEventIndex] = True
         pygame.init()
         pygame.mixer.init()
         
-        screen = pygame.display.set_mode((600, 200))
-        pygame.display.set_caption("ALARM CLOCK")
-        font = pygame.font.Font(None, 36)
-        txt_to_alarm_application = "Now playing: " + audioName
-        text0 = font.render(date_now.strftime("%H:%M:%S %Y-%m-%d"), True, (0, 255, 0))
-        text1 = font.render(txt_to_alarm_application, True, (255, 255, 255))
-        text2 =  font.render("To turn off the alarm press ESC or ENTER", True, (255, 255, 255))
-        screen.blit(text0, (200, 30))
-        screen.blit(text1, (130, 80))
-        screen.blit(text2, (60, 130))
-        pygame.display.flip()
         
         pygame.mixer.music.load(audioSource+audioName)
         pygame.mixer.music.play()
         
         isRunning = pygame.mixer.music.get_busy()
+        
         while isRunning:
-            for event in pygame.event.get():
-                # if event.type == pygame.QUIT:
-                #     isRunning = False
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN:
-                        pygame.mixer.music.stop()
-                        isRunning = False
-                        print("ALARM CLOCK TURN OFF MANUALLY")
-                    
+            key = input("Press q and then enter to stop the alarm: ")
+            if key == "q":
+                isRunning = False
+                print("ALARM CLOCK TURN OFF MANUALLY")
+
             pygame.time.Clock().tick(10)
             
         pygame.quit()
@@ -183,7 +163,7 @@ while True:
         time_difference = event1_start_time - date_now
         print("DIFFERENCE:", time_difference)  
     
-    print("WAITING", WAIT_N_MINUTES_FOR_NEXT_CHECK, "MINUTES")
+    print("\nWAITING", WAIT_N_MINUTES_FOR_NEXT_CHECK, "MINUTE(S)")
     time.sleep(WAIT_N_MINUTES_FOR_NEXT_CHECK * 60)
     print("NEXT CHECK")
     
